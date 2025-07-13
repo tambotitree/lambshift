@@ -2,56 +2,79 @@ import numpy as np
 from scipy.integrate import quad
 import matplotlib.pyplot as plt
 import os
+from scipy.constants import c, hbar, m_e, e, epsilon_0, alpha as alpha_fs
 
 # Constants
-alpha = 1 / 137.035999084  # fine-structure constant
-hbar_c = 197.3269804e-15  # Planck * c in eV·m
+alpha = alpha_fs
+Z = 1  # Hydrogen
+a0 = 5.29177210903e-11  # Bohr radius (m)
 rz = 3.8616e-13  # zitterbewegung radius (m)
-eV = 1.602176634e-19  # J
 
-# Create plots directory if missing
-if not os.path.exists("plots"):
-    os.makedirs("plots")
+# Dirac relativistic energy
+def E_dirac(n, kappa):
+    gamma = np.sqrt(1 - (Z * alpha)**2)
+    return m_e * c**2 * (1 + (Z * alpha)**2 / ((n - abs(kappa) + gamma)**2))**-0.5
 
-# Approximate Dirac-Coulomb radial functions for Hydrogen (simplified)
-def P_2S1(r):
-    a0 = 5.29177210903e-11  # Bohr radius in m
-    return (1 / np.sqrt(a0**3)) * (1 - r/(2*a0)) * np.exp(-r/(2*a0))
+# Dirac radial functions (unnormalized)
+def G_2S1(r):
+    rho = 2 * Z * r / a0
+    prefactor = (2 * Z / a0)**1.5
+    energy_factor = np.sqrt(m_e * c**2 - E_dirac(2, -1)) / np.sqrt(2 * m_e * c**2)
+    return prefactor * rho * np.exp(-rho/2) * (1 - rho/2) * energy_factor
 
-def Q_2S1(r):
-    a0 = 5.29177210903e-11  # Bohr radius in m
-    return (1 / np.sqrt(a0**3)) * (r/(2*a0)) * np.exp(-r/(2*a0))
+def F_2S1(r):
+    rho = 2 * Z * r / a0
+    prefactor = (2 * Z / a0)**1.5
+    energy_factor = np.sqrt(m_e * c**2 + E_dirac(2, -1)) / np.sqrt(2 * m_e * c**2)
+    return prefactor * rho * np.exp(-rho/2) * (1 - rho/2) * energy_factor
+
+# Normalize radial functions
+def normalize(G_func, F_func):
+    r_min = 1e-15
+    r_max = 5 * a0  # go out to 5 Bohr radii
+    integrand = lambda r: r**2 * (G_func(r)**2 + F_func(r)**2)
+    norm_factor, _ = quad(integrand, r_min, r_max, limit=500, epsabs=1e-6, epsrel=1e-6)
+    norm_factor = np.sqrt(norm_factor)
+    return lambda r: G_func(r)/norm_factor, lambda r: F_func(r)/norm_factor
 
 # Inner radial integral
-def I_nk(k, P_func, Q_func):
-    def integrand(r):
-        return r**2 * (P_func(r)**2 + Q_func(r)**2) * np.sinc(k * r / np.pi)
-    result, error = quad(integrand, 0, 1e-9, limit=500)
+def I_nk(k, G_func, F_func):
+    r_min = 1e-15
+    r_max = 5 * a0
+    integrand = lambda r: r**2 * (G_func(r)**2 + F_func(r)**2) * np.sinc(k * r / np.pi)
+    result, _ = quad(integrand, r_min, r_max, limit=500, epsabs=1e-6, epsrel=1e-6)
     return result
 
-# Outer integral
-def delta_E(P_func, Q_func):
+
+# Outer integral debug
+def delta_E(G_func, F_func):
+    k_min = 0
+    k_max = 1e10  # cap k for debug
+    total = 0.0
     def integrand(k):
-        return I_nk(k, P_func, Q_func)
-    result, error = quad(integrand, 0, 1/rz, limit=500)
-    energy_joules = (alpha / np.pi) * result
-    energy_eV = energy_joules / eV
+        value = I_nk(k, G_func, F_func)
+        print(f"k={k:.2e}, I_nk={value:.3e}")
+        return value
+    result, _ = quad(integrand, k_min, k_max, limit=200, epsabs=1e-6, epsrel=1e-6)
+    # energy_eV = (alpha / np.pi) * result / e  # J to eV ... hahaha energy in a meter!
+    energy_joules = (alpha / np.pi) * hbar * c * result
+    energy_eV = energy_joules / e  # J → eV
+    print(f"Partial energy shift (k_max={k_max:.1e}): {energy_eV:.6e} eV")
     return energy_eV
 
-# Main program
+
+G_norm, F_norm = normalize(G_2S1, F_2S1)
+# Diagnostic normalization check
+norm_check = quad(lambda r: r**2 * (G_norm(r)**2 + F_norm(r)**2), 1e-15, 5*a0)[0]
+print(f"Normalization integral: {norm_check:.6f}")
+
+# Main
 if __name__ == "__main__":
-    # Compute energy shift
-    energy_shift = delta_E(P_2S1, Q_2S1)
-    print(f"Lamb shift correction (2S_1/2): {energy_shift:.6f} eV")
+    print(f"Relativistic Dirac Energy (2S1/2): {E_dirac(2, -1)/e:.6f} eV")
 
-    # Plot inner integral
-    k_vals = np.linspace(0.01, 1e10, 100)
-    I_vals = [I_nk(k, P_2S1, Q_2S1) for k in k_vals]
+    for k in [0.1, 1.0, 10.0]:
+        val = I_nk(k, G_norm, F_norm)
+        print(f"I_nk({k:.1f}) = {val:.6e}")
 
-    plt.figure()
-    plt.plot(k_vals, I_vals)
-    plt.title("Inner Integral I_nk(k) for 2S1/2")
-    plt.xlabel("k (1/m)")
-    plt.ylabel("I_nk(k)")
-    plt.grid()
-    plt.savefig("plots/inner_integral_2S1_2P1.png")
+    shift = delta_E(G_norm, F_norm)
+    print(f"Lamb shift correction (2S1/2): {shift:.6f} eV")
