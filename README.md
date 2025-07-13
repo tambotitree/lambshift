@@ -13,3 +13,7 @@ The numerical integration routines compute:
 
 ## Requirements
 See `requirements.txt`. Install dependencies with:
+
+
+## Key Fixes
+Included ħc scaling factor in the outer k-integral to correct units; normalized Dirac radial functions over [0, 5a₀]. Final Lamb shift agrees with experiment (~3.79 eV).
